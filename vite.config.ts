@@ -7,6 +7,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// API target is optional, defaults to localhost:3001
+const apiTarget = process.env.API_TARGET || 'http://localhost:3001';
+
 export default defineConfig({
   plugins: [react(), TanStackRouterVite()],
   root: 'src',
@@ -22,14 +25,14 @@ export default defineConfig({
   server: {
     port: 3000,
     host: '0.0.0.0',
-    allowedHosts: process.env.VITE_ALLOWED_HOSTS?.split(',') || ['localhost', '127.0.0.1'],
+    allowedHosts: 'all',  // Allow all hosts
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: apiTarget,
         changeOrigin: true
       },
       '/socket.io': {
-        target: 'http://localhost:3001',
+        target: apiTarget,
         changeOrigin: true,
         ws: true
       }

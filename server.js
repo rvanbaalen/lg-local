@@ -20,8 +20,8 @@ const app = express();
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: "http://localhost:3000",
-    methods: ["GET", "POST"],
+    origin: "*",  // Allow all origins
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true
   }
 });
@@ -45,10 +45,12 @@ let lgCloudServer = null;
 // Initialize service connector for remote services
 const serviceConnector = new ServiceConnector(io, config);
 
-// Middleware
+// Middleware - Allow all CORS
 app.use(cors({
-  origin: "http://localhost:3000",
-  credentials: true
+  origin: "*",  // Allow all origins
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 app.use(express.json());
 
@@ -106,6 +108,13 @@ io.on('connection', (socket) => {
     socket.on('start-monitoring', async (data, callback) => {
         console.log('Starting local MQTT monitoring');
         try {
+            // Save MQTT configuration as local
+            configManager.updateSection('mqtt', {
+                ...configManager.getSection('mqtt'),
+                mode: 'local',
+                autoStart: false
+            });
+            
             if (!mqttMonitor) {
                 mqttMonitor = new MQTTMonitor(io);
             }
@@ -131,7 +140,7 @@ io.on('connection', (socket) => {
         if (mqttMonitor) {
             mqttMonitor.stopMonitoring();
         }
-        callback({ success: true, status: 'inactive' });
+        callback && callback({ success: true, status: 'inactive' });
     });
     
     // Handle TLV parsing requests
@@ -176,6 +185,9 @@ io.on('connection', (socket) => {
     // Handle MQTT configuration
     socket.on('configure-mqtt', async (config, callback) => {
         try {
+            if (!mqttMonitor) {
+                mqttMonitor = new MQTTMonitor(io);
+            }
             await mqttMonitor.connect(config);
             callback({ success: true, status: mqttMonitor.getStatus() });
         } catch (error) {
@@ -214,12 +226,22 @@ io.on('connection', (socket) => {
     
     // Get MQTT status
     socket.on('get-mqtt-status', (callback) => {
-        callback(mqttMonitor.getStatus());
+        if (mqttMonitor) {
+            callback(mqttMonitor.getStatus());
+        } else {
+            callback({ connected: false, status: 'inactive' });
+        }
     });
     
     // Local Setup server controls
     socket.on('start-setup-server', (callback) => {
         try {
+            // Save service configuration as local
+            configManager.updateServiceConfig('setupServer', {
+                mode: 'local',
+                autoStart: false
+            });
+            
             if (!setupServer) {
                 setupServer = new SetupServer(io, configManager);
             }
@@ -260,6 +282,12 @@ io.on('connection', (socket) => {
     // Local LG Cloud server controls
     socket.on('start-lg-cloud', async (callback) => {
         try {
+            // Save service configuration as local
+            configManager.updateServiceConfig('lgCloud', {
+                mode: 'local',
+                autoStart: false
+            });
+            
             if (!lgCloudServer) {
                 lgCloudServer = new LGCloudServer(io, configManager);
             }
@@ -327,6 +355,13 @@ io.on('connection', (socket) => {
         const endpoint = `http://${host}:${port}`;
         
         try {
+            // Save service configuration as remote
+            configManager.updateServiceConfig(serviceType, {
+                mode: 'remote',
+                host: host,
+                port: port
+            });
+            
             serviceConnector.connectToService(serviceType, endpoint);
             callback({ success: true, endpoint });
         } catch (error) {

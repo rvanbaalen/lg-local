@@ -5,7 +5,11 @@ export function useSocket(): Socket | null {
   const [socket, setSocket] = useState<Socket | null>(null);
 
   useEffect(() => {
-    const newSocket = io('http://localhost:3001');
+    // Use relative URL to connect through Vite's proxy in dev
+    // or directly to the server in production
+    const newSocket = io('', {
+      path: '/socket.io'
+    });
     
     newSocket.on('connect', () => {
       console.log('Connected to server');

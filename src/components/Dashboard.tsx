@@ -12,10 +12,11 @@ export default function Dashboard() {
   const [remoteServices, setRemoteServices] = useState({});
   const [showRemoteConfig, setShowRemoteConfig] = useState(false);
   const [remoteServiceForm, setRemoteServiceForm] = useState({
-    serviceType: 'setup-server',
+    serviceType: 'setupServer',
     host: '',
     port: ''
   });
+  const [serviceConfigs, setServiceConfigs] = useState({});
 
   useEffect(() => {
     if (!socket) return;
@@ -39,6 +40,11 @@ export default function Dashboard() {
 
     socket.emit('get-remote-services', (services) => {
       setRemoteServices(services);
+    });
+
+    // Load service configurations
+    socket.emit('get-config', (config) => {
+      setServiceConfigs(config.services || {});
     });
 
     // Listen for status updates
@@ -93,6 +99,10 @@ export default function Dashboard() {
     socket?.emit('start-setup-server', (response) => {
       if (response.success) {
         setSetupServerStatus('running');
+        // Refresh service configs
+        socket?.emit('get-config', (config) => {
+          setServiceConfigs(config.services || {});
+        });
       } else {
         alert('Failed to start setup server: ' + response.error);
       }
@@ -113,6 +123,10 @@ export default function Dashboard() {
     socket?.emit('start-lg-cloud', (response) => {
       if (response.success) {
         setLgCloudStatus('running');
+        // Refresh service configs
+        socket?.emit('get-config', (config) => {
+          setServiceConfigs(config.services || {});
+        });
       } else {
         alert('Failed to start LG Cloud: ' + response.error);
       }
@@ -130,7 +144,14 @@ export default function Dashboard() {
   };
 
   const handleStartMonitoring = () => {
-    socket?.emit('start-monitoring', {});
+    socket?.emit('start-monitoring', {}, (response) => {
+      if (response?.success) {
+        // Refresh service configs
+        socket?.emit('get-config', (config) => {
+          setServiceConfigs(config.services || {});
+        });
+      }
+    });
   };
 
   const handleStopMonitoring = () => {
@@ -145,10 +166,13 @@ export default function Dashboard() {
     }, (response) => {
       if (response.success) {
         setShowRemoteConfig(false);
-        setRemoteServiceForm({ serviceType: 'setup-server', host: '', port: '' });
-        // Refresh remote services
+        setRemoteServiceForm({ serviceType: 'setupServer', host: '', port: '' });
+        // Refresh remote services and configs
         socket?.emit('get-remote-services', (services) => {
           setRemoteServices(services);
+        });
+        socket?.emit('get-config', (config) => {
+          setServiceConfigs(config.services || {});
         });
       } else {
         alert('Failed to connect to remote service: ' + response.error);
@@ -192,6 +216,12 @@ export default function Dashboard() {
             <span className={`status-indicator ${setupServerStatus === 'running' ? 'connected' : 'disconnected'}`}></span>
             Status: {setupServerStatus}
           </div>
+          <div>
+            Mode: {serviceConfigs.setupServer?.mode || 'local'}
+            {serviceConfigs.setupServer?.mode === 'remote' && (
+              <div>Remote: {serviceConfigs.setupServer?.host}:{serviceConfigs.setupServer?.port}</div>
+            )}
+          </div>
           <div style={{ marginTop: '1rem' }}>
             {setupServerStatus === 'running' ? (
               <button className="btn danger" onClick={handleStopSetupServer}>
@@ -211,6 +241,12 @@ export default function Dashboard() {
             <span className={`status-indicator ${lgCloudStatus === 'running' ? 'connected' : 'disconnected'}`}></span>
             Status: {lgCloudStatus}
           </div>
+          <div>
+            Mode: {serviceConfigs.lgCloud?.mode || 'local'}
+            {serviceConfigs.lgCloud?.mode === 'remote' && (
+              <div>Remote: {serviceConfigs.lgCloud?.host}:{serviceConfigs.lgCloud?.port}</div>
+            )}
+          </div>
           <div style={{ marginTop: '1rem' }}>
             {lgCloudStatus === 'running' ? (
               <button className="btn danger" onClick={handleStopLgCloud}>
@@ -229,6 +265,12 @@ export default function Dashboard() {
           <div>
             <span className={`status-indicator ${mqttStatus}`}></span>
             Status: {mqttStatus}
+          </div>
+          <div>
+            Mode: {serviceConfigs.mqtt?.mode || 'local'}
+            {serviceConfigs.mqtt?.mode === 'remote' && serviceConfigs.mqtt?.host && (
+              <div>Remote: {serviceConfigs.mqtt?.host}:{serviceConfigs.mqtt?.port}</div>
+            )}
           </div>
           <div style={{ marginTop: '1rem' }}>
             {mqttStatus === 'connected' ? (
@@ -319,8 +361,9 @@ export default function Dashboard() {
               value={remoteServiceForm.serviceType}
               onChange={(e) => setRemoteServiceForm(prev => ({ ...prev, serviceType: e.target.value }))}
             >
-              <option value="setup-server">Setup Server</option>
-              <option value="lg-cloud">LG Cloud</option>
+              <option value="setupServer">Setup Server</option>
+              <option value="lgCloud">LG Cloud</option>
+              <option value="mqtt">MQTT Broker</option>
             </select>
           </div>
           <div className="form-group">
