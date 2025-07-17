@@ -202,6 +202,10 @@ This project is built for educational and research purposes. Contributions are w
 - Improved service discovery and management
 - Documentation improvements
 
+## Credits
+
+Based on research from the [rethink project](https://github.com/anszom/rethink) by [anszom](https://github.com/anszom).
+
 ## License
 
 MIT License
