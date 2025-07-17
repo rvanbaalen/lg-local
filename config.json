@@ -31,8 +31,8 @@
             "autoStart": false
         },
         "lgCloud": {
-            "mode": "local",
-            "host": "localhost",
+            "mode": "remote",
+            "host": "192.168.1.11",
             "port": 8080,
             "autoStart": false
         }
