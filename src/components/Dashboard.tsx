@@ -17,6 +17,7 @@ interface MQTTConfig extends ServiceConfig {
 export default function Dashboard() {
   const socket = useSocket();
   const [serverStatus, setServerStatus] = useState('disconnected');
+  const [serverPort, setServerPort] = useState<number | null>(null);
   const [mqttStatus, setMqttStatus] = useState('disconnected');
   const [setupServerStatus, setSetupServerStatus] = useState('stopped');
   const [lgCloudStatus, setLgCloudStatus] = useState('stopped');
@@ -51,6 +52,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!socket) return;
+
+    // Get server status and port
+    fetch('/api/status')
+      .then(res => res.json())
+      .then(data => {
+        setServerPort(data.port);
+      })
+      .catch(err => console.error('Failed to get server status:', err));
 
     // Get initial status
     socket.emit('get-mqtt-status', (status) => {
@@ -286,6 +295,9 @@ export default function Dashboard() {
             <span className={`status-indicator ${serverStatus}`}></span>
             Status: {serverStatus}
           </div>
+          {serverPort && (
+            <div>Port: {serverPort}</div>
+          )}
         </div>
 
         {/* MQTT Server Card */}

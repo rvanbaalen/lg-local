@@ -23,10 +23,9 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3000,
     host: '0.0.0.0',
     allowedHosts: 'all',  // Allow all hosts
-    strictPort: true,  // Fail if port 3000 is in use instead of trying other ports
+    // Don't specify port, let Vite automatically find available port
     proxy: {
       '/api': {
         target: apiTarget,

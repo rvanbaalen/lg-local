@@ -30,7 +30,26 @@ const io = new SocketIOServer(server, {
 const configManager = new ConfigManager();
 const config = configManager.getConfig();
 
-const PORT = process.env.PORT || config.server.port;
+// Function to find available port
+async function findAvailablePort(startPort) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(startPort, () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
+    
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        // Try next port
+        findAvailablePort(startPort + 1).then(resolve).catch(reject);
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
+
+const DEFAULT_PORT = process.env.PORT || config.server.port;
 
 // Initialize parsers
 const tlvParser = new TLVParser();
@@ -55,7 +74,12 @@ app.use(cors({
 app.use(express.json());
 
 app.get('/api/status', (req, res) => {
-    res.json({ status: 'running', timestamp: new Date().toISOString() });
+    const serverPort = server.address()?.port || DEFAULT_PORT;
+    res.json({ 
+        status: 'running', 
+        timestamp: new Date().toISOString(),
+        port: serverPort
+    });
 });
 
 // Configuration API endpoints
@@ -389,8 +413,24 @@ io.on('connection', (socket) => {
     });
 });
 
-// Start server
-server.listen(PORT, () => {
-    console.log(`LG ThinQ Debug Tool running on port ${PORT}`);
-    console.log(`Open http://localhost:${PORT} in your browser`);
-});
+// Start server with dynamic port selection
+async function startServer() {
+    try {
+        const PORT = await findAvailablePort(DEFAULT_PORT);
+        
+        server.listen(PORT, '0.0.0.0', () => {
+            console.log(`LG ThinQ Local Server running on port ${PORT}`);
+            console.log(`Open http://localhost:${PORT} in your browser`);
+            console.log(`Network access: http://[your-ip]:${PORT}`);
+        });
+        
+        // Update configuration with actual port
+        configManager.updateValue('server', 'port', PORT);
+        
+    } catch (error) {
+        console.error('Failed to start server:', error);
+        process.exit(1);
+    }
+}
+
+startServer();
