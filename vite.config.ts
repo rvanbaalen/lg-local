@@ -26,6 +26,7 @@ export default defineConfig({
     port: 3000,
     host: '0.0.0.0',
     allowedHosts: 'all',  // Allow all hosts
+    strictPort: true,  // Fail if port 3000 is in use instead of trying other ports
     proxy: {
       '/api': {
         target: apiTarget,
