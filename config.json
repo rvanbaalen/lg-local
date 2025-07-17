@@ -1,0 +1,25 @@
+{
+    "mqtt": {
+        "url": "",
+        "username": "",
+        "password": "",
+        "discovery_prefix": "homeassistant",
+        "rethink_prefix": "rethink",
+        "port": 1884,
+        "mqtts_port": 8884
+    },
+    "server": {
+        "port": 3001,
+        "host": "localhost"
+    },
+    "monitoring": {
+        "auto_start": false,
+        "buffer_size": 1000,
+        "log_level": "info"
+    },
+    "wifi": {
+        "ssid": "",
+        "password": "",
+        "security": "WPA2"
+    }
+}
