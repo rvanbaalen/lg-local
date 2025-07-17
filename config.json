@@ -1,8 +1,8 @@
 {
     "mqtt": {
-        "url": "",
-        "username": "",
-        "password": "",
+        "url": "mqtt://192.168.1.8:1883",
+        "username": "mqtt",
+        "password": "freeway0DINNERS!cheng",
         "discovery_prefix": "homeassistant",
         "rethink_prefix": "rethink",
         "port": 1884,
@@ -18,8 +18,8 @@
         "log_level": "info"
     },
     "wifi": {
-        "ssid": "",
-        "password": "",
+        "ssid": "CasaDorus_IoT",
+        "password": "IoTCasaDorus!!",
         "security": "WPA2"
     }
 }

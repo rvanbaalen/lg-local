@@ -1,18 +1,30 @@
-const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
-const path = require('path');
+import express from 'express';
+import http from 'http';
+import cors from 'cors';
+import { Server as SocketIOServer } from 'socket.io';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const { TLVParser } = require('./lib/tlv');
-const { SetupProtocolParser, CloudProtocolParser } = require('./lib/protocol');
-const { MQTTMonitor } = require('./lib/mqtt-monitor');
-const { ConfigManager } = require('./lib/config');
-const { SetupServer } = require('./lib/setup-server');
-const { LGCloudServer } = require('./lib/lg-cloud-server');
+import { TLVParser } from './lib/tlv.js';
+import { SetupProtocolParser, CloudProtocolParser } from './lib/protocol.js';
+import { MQTTMonitor } from './lib/mqtt-monitor.js';
+import { ConfigManager } from './lib/config.js';
+import { SetupServer } from './lib/setup-server.js';
+import { LGCloudServer } from './lib/lg-cloud-server.js';
+import { ServiceConnector } from './lib/service-connector.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
 
 // Initialize configuration
 const configManager = new ConfigManager();
@@ -20,22 +32,25 @@ const config = configManager.getConfig();
 
 const PORT = process.env.PORT || config.server.port;
 
-// Initialize parsers and servers
+// Initialize parsers
 const tlvParser = new TLVParser();
 const setupParser = new SetupProtocolParser();
 const cloudParser = new CloudProtocolParser();
-const mqttMonitor = new MQTTMonitor(io);
-const setupServer = new SetupServer(io, configManager);
-const lgCloudServer = new LGCloudServer(io, configManager);
+
+// Initialize optional local services (can be started/stopped from UI)
+let mqttMonitor = null;
+let setupServer = null;
+let lgCloudServer = null;
+
+// Initialize service connector for remote services
+const serviceConnector = new ServiceConnector(io, config);
 
 // Middleware
+app.use(cors({
+  origin: "http://localhost:3000",
+  credentials: true
+}));
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Routes
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
 
 app.get('/api/status', (req, res) => {
     res.json({ status: 'running', timestamp: new Date().toISOString() });
@@ -87,32 +102,36 @@ io.on('connection', (socket) => {
         console.log('Web interface disconnected:', socket.id);
     });
     
-    // Handle client requests for protocol monitoring
-    socket.on('start-monitoring', async (data) => {
-        console.log('Starting monitoring for:', data);
+    // Local MQTT monitoring
+    socket.on('start-monitoring', async (data, callback) => {
+        console.log('Starting local MQTT monitoring');
         try {
-            // Only connect to MQTT broker if configuration is valid
+            if (!mqttMonitor) {
+                mqttMonitor = new MQTTMonitor(io);
+            }
+            
             const mqttConfig = configManager.getMQTTConfig();
             if (mqttConfig.host && mqttConfig.port && !mqttMonitor.isConnected) {
                 await mqttMonitor.connect(mqttConfig);
             }
             
-            // Start monitoring MQTT messages
             if (mqttMonitor.isConnected) {
                 mqttMonitor.startMonitoring();
             }
             
-            socket.emit('monitoring-started', { status: 'active' });
+            callback({ success: true, status: 'active' });
         } catch (error) {
             console.error('Failed to start monitoring:', error);
-            socket.emit('monitoring-error', { error: error.message });
+            callback({ success: false, error: error.message });
         }
     });
     
-    socket.on('stop-monitoring', () => {
-        console.log('Stopping monitoring');
-        mqttMonitor.stopMonitoring();
-        socket.emit('monitoring-stopped', { status: 'inactive' });
+    socket.on('stop-monitoring', (callback) => {
+        console.log('Stopping local MQTT monitoring');
+        if (mqttMonitor) {
+            mqttMonitor.stopMonitoring();
+        }
+        callback({ success: true, status: 'inactive' });
     });
     
     // Handle TLV parsing requests
@@ -198,60 +217,136 @@ io.on('connection', (socket) => {
         callback(mqttMonitor.getStatus());
     });
     
-    // Setup server controls
-    socket.on('start-setup-server', () => {
-        setupServer.start();
-    });
-    
-    socket.on('stop-setup-server', () => {
-        setupServer.stop();
-    });
-    
-    socket.on('get-setup-server-status', (callback) => {
-        callback(setupServer.getStatus());
-    });
-    
-    socket.on('get-connected-devices', (callback) => {
-        callback(setupServer.getConnectedDevices());
-    });
-    
-    // LG Cloud server controls
-    socket.on('start-lg-cloud', async () => {
+    // Local Setup server controls
+    socket.on('start-setup-server', (callback) => {
         try {
-            await lgCloudServer.start();
-        } catch (error) {
-            console.error('Failed to start LG Cloud Server:', error);
-        }
-    });
-    
-    socket.on('stop-lg-cloud', async () => {
-        try {
-            await lgCloudServer.stop();
-        } catch (error) {
-            console.error('Failed to stop LG Cloud Server:', error);
-        }
-    });
-    
-    socket.on('get-lg-cloud-status', (callback) => {
-        callback(lgCloudServer.getStatus());
-    });
-    
-    socket.on('get-lg-cloud-devices', (callback) => {
-        callback(lgCloudServer.getConnectedDevices());
-    });
-    
-    socket.on('get-lg-cloud-messages', (data, callback) => {
-        const limit = data?.limit || 100;
-        callback(lgCloudServer.getMessageHistory(limit));
-    });
-    
-    socket.on('send-device-message', (data, callback) => {
-        try {
-            lgCloudServer.sendMessageToDevice(data.deviceId, data.message);
+            if (!setupServer) {
+                setupServer = new SetupServer(io, configManager);
+            }
+            setupServer.start();
             callback({ success: true });
         } catch (error) {
             callback({ success: false, error: error.message });
         }
+    });
+    
+    socket.on('stop-setup-server', (callback) => {
+        try {
+            if (setupServer) {
+                setupServer.stop();
+            }
+            callback({ success: true });
+        } catch (error) {
+            callback({ success: false, error: error.message });
+        }
+    });
+    
+    socket.on('get-setup-server-status', (callback) => {
+        if (setupServer) {
+            callback(setupServer.getStatus());
+        } else {
+            callback({ running: false, port: null, connectedDevices: [] });
+        }
+    });
+    
+    socket.on('get-connected-devices', (callback) => {
+        if (setupServer) {
+            callback(setupServer.getConnectedDevices());
+        } else {
+            callback([]);
+        }
+    });
+    
+    // Local LG Cloud server controls
+    socket.on('start-lg-cloud', async (callback) => {
+        try {
+            if (!lgCloudServer) {
+                lgCloudServer = new LGCloudServer(io, configManager);
+            }
+            await lgCloudServer.start();
+            callback({ success: true });
+        } catch (error) {
+            console.error('Failed to start LG Cloud Server:', error);
+            callback({ success: false, error: error.message });
+        }
+    });
+    
+    socket.on('stop-lg-cloud', async (callback) => {
+        try {
+            if (lgCloudServer) {
+                await lgCloudServer.stop();
+            }
+            callback({ success: true });
+        } catch (error) {
+            console.error('Failed to stop LG Cloud Server:', error);
+            callback({ success: false, error: error.message });
+        }
+    });
+    
+    socket.on('get-lg-cloud-status', (callback) => {
+        if (lgCloudServer) {
+            callback(lgCloudServer.getStatus());
+        } else {
+            callback({ running: false });
+        }
+    });
+    
+    socket.on('get-lg-cloud-devices', (callback) => {
+        if (lgCloudServer) {
+            callback(lgCloudServer.getConnectedDevices());
+        } else {
+            callback([]);
+        }
+    });
+    
+    socket.on('get-lg-cloud-messages', (data, callback) => {
+        if (lgCloudServer) {
+            const limit = data?.limit || 100;
+            callback(lgCloudServer.getMessageHistory(limit));
+        } else {
+            callback([]);
+        }
+    });
+    
+    socket.on('send-device-message', (data, callback) => {
+        try {
+            if (lgCloudServer) {
+                lgCloudServer.sendMessageToDevice(data.deviceId, data.message);
+                callback({ success: true });
+            } else {
+                callback({ success: false, error: 'LG Cloud server not running' });
+            }
+        } catch (error) {
+            callback({ success: false, error: error.message });
+        }
+    });
+    
+    // Remote service connection
+    socket.on('connect-remote-service', (data, callback) => {
+        const { serviceType, host, port } = data;
+        const endpoint = `http://${host}:${port}`;
+        
+        try {
+            serviceConnector.connectToService(serviceType, endpoint);
+            callback({ success: true, endpoint });
+        } catch (error) {
+            callback({ success: false, error: error.message });
+        }
+    });
+    
+    socket.on('disconnect-remote-service', (data, callback) => {
+        const { serviceType } = data;
+        
+        try {
+            serviceConnector.disconnectFromService(serviceType);
+            callback({ success: true });
+        } catch (error) {
+            callback({ success: false, error: error.message });
+        }
+    });
+    
+    socket.on('get-remote-services', (callback) => {
+        callback(serviceConnector.getConnectedServices());
     });
 });
 
