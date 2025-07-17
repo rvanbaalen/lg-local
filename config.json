@@ -21,5 +21,20 @@
         "ssid": "CasaDorus_IoT",
         "password": "IoTCasaDorus!!",
         "security": "WPA2"
+    },
+    "services": {
+        "setupServer": {
+            "mode": "local",
+            "host": "localhost",
+            "port": 5501,
+            "tlsPort": 5500,
+            "autoStart": false
+        },
+        "lgCloud": {
+            "mode": "local",
+            "host": "localhost",
+            "port": 8080,
+            "autoStart": false
+        }
     }
 }

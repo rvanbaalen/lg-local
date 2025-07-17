@@ -1,6 +1,19 @@
 import { useState, useEffect } from 'react';
 import { useSocket } from '../hooks/useSocket';
 
+interface ServiceConfig {
+  mode: 'local' | 'remote';
+  host: string;
+  port: number;
+  autoStart?: boolean;
+}
+
+interface MQTTConfig extends ServiceConfig {
+  url?: string;
+  username?: string;
+  password?: string;
+}
+
 export default function Dashboard() {
   const socket = useSocket();
   const [serverStatus, setServerStatus] = useState('disconnected');
@@ -9,14 +22,32 @@ export default function Dashboard() {
   const [lgCloudStatus, setLgCloudStatus] = useState('stopped');
   const [connectedDevices, setConnectedDevices] = useState([]);
   const [recentMessages, setRecentMessages] = useState([]);
-  const [remoteServices, setRemoteServices] = useState({});
-  const [showRemoteConfig, setShowRemoteConfig] = useState(false);
-  const [remoteServiceForm, setRemoteServiceForm] = useState({
-    serviceType: 'setupServer',
-    host: '',
-    port: ''
+  
+  // Service configurations
+  const [mqttConfig, setMqttConfig] = useState<MQTTConfig>({
+    mode: 'local',
+    host: 'localhost',
+    port: 1883,
+    url: '',
+    username: '',
+    password: ''
   });
-  const [serviceConfigs, setServiceConfigs] = useState({});
+  
+  const [setupConfig, setSetupConfig] = useState<ServiceConfig>({
+    mode: 'local',
+    host: 'localhost',
+    port: 5501
+  });
+  
+  const [lgCloudConfig, setLgCloudConfig] = useState<ServiceConfig>({
+    mode: 'local',
+    host: 'localhost',
+    port: 8080
+  });
+
+  const [showMqttConfig, setShowMqttConfig] = useState(false);
+  const [showSetupConfig, setShowSetupConfig] = useState(false);
+  const [showLgCloudConfig, setShowLgCloudConfig] = useState(false);
 
   useEffect(() => {
     if (!socket) return;
@@ -38,13 +69,32 @@ export default function Dashboard() {
       setConnectedDevices(devices);
     });
 
-    socket.emit('get-remote-services', (services) => {
-      setRemoteServices(services);
-    });
-
     // Load service configurations
     socket.emit('get-config', (config) => {
-      setServiceConfigs(config.services || {});
+      if (config.mqtt) {
+        setMqttConfig({
+          mode: config.mqtt.mode || 'local',
+          host: config.mqtt.host || 'localhost',
+          port: config.mqtt.port || 1883,
+          url: config.mqtt.url || '',
+          username: config.mqtt.username || '',
+          password: config.mqtt.password || ''
+        });
+      }
+      if (config.services?.setupServer) {
+        setSetupConfig({
+          mode: config.services.setupServer.mode || 'local',
+          host: config.services.setupServer.host || 'localhost',
+          port: config.services.setupServer.port || 5501
+        });
+      }
+      if (config.services?.lgCloud) {
+        setLgCloudConfig({
+          mode: config.services.lgCloud.mode || 'local',
+          host: config.services.lgCloud.host || 'localhost',
+          port: config.services.lgCloud.port || 8080
+        });
+      }
     });
 
     // Listen for status updates
@@ -73,6 +123,11 @@ export default function Dashboard() {
       setRecentMessages(prev => [message, ...prev.slice(0, 9)]);
     });
 
+    socket.on('lg-cloud-error', (error) => {
+      console.error('LG Cloud error:', error);
+      alert(`LG Cloud Server Error: ${error.error}`);
+    });
+
     return () => {
       socket.off('mqtt-connected');
       socket.off('mqtt-disconnected');
@@ -84,6 +139,7 @@ export default function Dashboard() {
       socket.off('appliance-disconnected');
       socket.off('setup-message');
       socket.off('cloud-message');
+      socket.off('lg-cloud-error');
     };
   }, [socket]);
 
@@ -95,102 +151,128 @@ export default function Dashboard() {
     }
   }, [socket]);
 
-  const handleStartSetupServer = () => {
+  // MQTT handlers
+  const handleStartMqttLocal = () => {
+    const config = {
+      url: `mqtt://${mqttConfig.host}:${mqttConfig.port}`,
+      username: mqttConfig.username,
+      password: mqttConfig.password
+    };
+    
+    socket?.emit('update-config', {
+      section: 'mqtt',
+      config: { ...config, mode: 'local' }
+    }, (response) => {
+      if (response.success) {
+        socket?.emit('start-monitoring', {}, (response) => {
+          if (!response?.success) {
+            alert('Failed to start MQTT monitoring');
+          }
+        });
+      }
+    });
+  };
+
+  const handleConnectMqttRemote = () => {
+    const config = {
+      url: `mqtt://${mqttConfig.host}:${mqttConfig.port}`,
+      username: mqttConfig.username,
+      password: mqttConfig.password,
+      mode: 'remote'
+    };
+    
+    socket?.emit('update-config', {
+      section: 'mqtt',
+      config
+    }, (response) => {
+      if (response.success) {
+        socket?.emit('configure-mqtt', config, (response) => {
+          if (response.success) {
+            setShowMqttConfig(false);
+          } else {
+            alert('Failed to connect to MQTT broker: ' + response.error);
+          }
+        });
+      }
+    });
+  };
+
+  const handleStopMqtt = () => {
+    socket?.emit('stop-monitoring');
+  };
+
+  // Setup Server handlers
+  const handleStartSetupLocal = () => {
     socket?.emit('start-setup-server', (response) => {
-      if (response.success) {
-        setSetupServerStatus('running');
-        // Refresh service configs
-        socket?.emit('get-config', (config) => {
-          setServiceConfigs(config.services || {});
-        });
-      } else {
+      if (!response.success) {
         alert('Failed to start setup server: ' + response.error);
-      }
-    });
-  };
-
-  const handleStopSetupServer = () => {
-    socket?.emit('stop-setup-server', (response) => {
-      if (response.success) {
-        setSetupServerStatus('stopped');
       } else {
-        alert('Failed to stop setup server: ' + response.error);
+        setShowSetupConfig(false);
       }
     });
   };
 
-  const handleStartLgCloud = () => {
+  const handleConnectSetupRemote = () => {
+    socket?.emit('connect-remote-service', {
+      serviceType: 'setupServer',
+      host: setupConfig.host,
+      port: setupConfig.port
+    }, (response) => {
+      if (response.success) {
+        setShowSetupConfig(false);
+      } else {
+        alert('Failed to connect to remote setup server: ' + response.error);
+      }
+    });
+  };
+
+  const handleStopSetup = () => {
+    if (setupConfig.mode === 'local') {
+      socket?.emit('stop-setup-server', (response) => {
+        if (response && !response.success) {
+          alert('Failed to stop setup server: ' + response.error);
+        }
+      });
+    } else {
+      socket?.emit('disconnect-remote-service', { serviceType: 'setupServer' });
+    }
+  };
+
+  // LG Cloud handlers
+  const handleStartLgCloudLocal = () => {
     socket?.emit('start-lg-cloud', (response) => {
-      if (response.success) {
-        setLgCloudStatus('running');
-        // Refresh service configs
-        socket?.emit('get-config', (config) => {
-          setServiceConfigs(config.services || {});
-        });
+      if (!response.success) {
+        alert('Failed to start LG Cloud server: ' + response.error);
       } else {
-        alert('Failed to start LG Cloud: ' + response.error);
+        setShowLgCloudConfig(false);
+      }
+    });
+  };
+
+  const handleConnectLgCloudRemote = () => {
+    socket?.emit('connect-remote-service', {
+      serviceType: 'lgCloud',
+      host: lgCloudConfig.host,
+      port: lgCloudConfig.port
+    }, (response) => {
+      if (response.success) {
+        setShowLgCloudConfig(false);
+      } else {
+        alert('Failed to connect to remote LG Cloud server: ' + response.error);
       }
     });
   };
 
   const handleStopLgCloud = () => {
-    socket?.emit('stop-lg-cloud', (response) => {
-      if (response.success) {
-        setLgCloudStatus('stopped');
-      } else {
-        alert('Failed to stop LG Cloud: ' + response.error);
-      }
-    });
-  };
-
-  const handleStartMonitoring = () => {
-    socket?.emit('start-monitoring', {}, (response) => {
-      if (response?.success) {
-        // Refresh service configs
-        socket?.emit('get-config', (config) => {
-          setServiceConfigs(config.services || {});
-        });
-      }
-    });
-  };
-
-  const handleStopMonitoring = () => {
-    socket?.emit('stop-monitoring');
-  };
-
-  const handleConnectRemoteService = () => {
-    socket?.emit('connect-remote-service', {
-      serviceType: remoteServiceForm.serviceType,
-      host: remoteServiceForm.host,
-      port: parseInt(remoteServiceForm.port)
-    }, (response) => {
-      if (response.success) {
-        setShowRemoteConfig(false);
-        setRemoteServiceForm({ serviceType: 'setupServer', host: '', port: '' });
-        // Refresh remote services and configs
-        socket?.emit('get-remote-services', (services) => {
-          setRemoteServices(services);
-        });
-        socket?.emit('get-config', (config) => {
-          setServiceConfigs(config.services || {});
-        });
-      } else {
-        alert('Failed to connect to remote service: ' + response.error);
-      }
-    });
-  };
-
-  const handleDisconnectRemoteService = (serviceType) => {
-    socket?.emit('disconnect-remote-service', { serviceType }, (response) => {
-      if (response.success) {
-        // Refresh remote services
-        socket?.emit('get-remote-services', (services) => {
-          setRemoteServices(services);
-        });
-      } else {
-        alert('Failed to disconnect from remote service: ' + response.error);
-      }
-    });
+    if (lgCloudConfig.mode === 'local') {
+      socket?.emit('stop-lg-cloud', (response) => {
+        if (response && !response.success) {
+          alert('Failed to stop LG Cloud server: ' + response.error);
+        }
+      });
+    } else {
+      socket?.emit('disconnect-remote-service', { serviceType: 'lgCloud' });
+    }
   };
 
   return (
@@ -199,90 +281,256 @@ export default function Dashboard() {
       
       <div className="dashboard">
         <div className="card">
-          <h2>Server Status</h2>
+          <h2>Web Server Status</h2>
           <div>
             <span className={`status-indicator ${serverStatus}`}></span>
-            Web Server: {serverStatus}
-          </div>
-          <div>
-            <span className={`status-indicator ${mqttStatus}`}></span>
-            MQTT: {mqttStatus}
+            Status: {serverStatus}
           </div>
         </div>
 
+        {/* MQTT Server Card */}
+        <div className="card">
+          <h2>MQTT Server</h2>
+          <div>
+            <span className={`status-indicator ${mqttStatus}`}></span>
+            Status: {mqttStatus}
+          </div>
+          <div>Mode: {mqttConfig.mode}</div>
+          {mqttConfig.mode === 'remote' && (
+            <div>Remote: {mqttConfig.host}:{mqttConfig.port}</div>
+          )}
+          
+          {!showMqttConfig ? (
+            <div style={{ marginTop: '1rem' }}>
+              {mqttStatus === 'connected' ? (
+                <button className="btn danger" onClick={handleStopMqtt}>
+                  Stop MQTT
+                </button>
+              ) : (
+                <>
+                  <button className="btn success" onClick={() => setShowMqttConfig(true)}>
+                    Configure
+                  </button>
+                  <button 
+                    className="btn" 
+                    onClick={handleStartMqttLocal}
+                    style={{ marginLeft: '0.5rem' }}
+                  >
+                    Start Local
+                  </button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="config-form" style={{ marginTop: '1rem' }}>
+              <div className="form-group">
+                <label>Host:</label>
+                <input
+                  type="text"
+                  value={mqttConfig.host}
+                  onChange={(e) => setMqttConfig({...mqttConfig, host: e.target.value})}
+                  placeholder="localhost"
+                />
+              </div>
+              <div className="form-group">
+                <label>Port:</label>
+                <input
+                  type="number"
+                  value={mqttConfig.port}
+                  onChange={(e) => setMqttConfig({...mqttConfig, port: parseInt(e.target.value)})}
+                  placeholder="1883"
+                />
+              </div>
+              <div className="form-group">
+                <label>Username (optional):</label>
+                <input
+                  type="text"
+                  value={mqttConfig.username}
+                  onChange={(e) => setMqttConfig({...mqttConfig, username: e.target.value})}
+                />
+              </div>
+              <div className="form-group">
+                <label>Password (optional):</label>
+                <input
+                  type="password"
+                  value={mqttConfig.password}
+                  onChange={(e) => setMqttConfig({...mqttConfig, password: e.target.value})}
+                />
+              </div>
+              <div style={{ marginTop: '1rem' }}>
+                <button className="btn success" onClick={handleStartMqttLocal}>
+                  Start Local
+                </button>
+                <button 
+                  className="btn" 
+                  onClick={handleConnectMqttRemote}
+                  style={{ marginLeft: '0.5rem' }}
+                >
+                  Connect Remote
+                </button>
+                <button 
+                  className="btn" 
+                  onClick={() => setShowMqttConfig(false)}
+                  style={{ marginLeft: '0.5rem' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Setup Server Card */}
         <div className="card">
           <h2>Setup Server</h2>
           <div>
             <span className={`status-indicator ${setupServerStatus === 'running' ? 'connected' : 'disconnected'}`}></span>
             Status: {setupServerStatus}
           </div>
-          <div>
-            Mode: {serviceConfigs.setupServer?.mode || 'local'}
-            {serviceConfigs.setupServer?.mode === 'remote' && (
-              <div>Remote: {serviceConfigs.setupServer?.host}:{serviceConfigs.setupServer?.port}</div>
-            )}
-          </div>
-          <div style={{ marginTop: '1rem' }}>
-            {setupServerStatus === 'running' ? (
-              <button className="btn danger" onClick={handleStopSetupServer}>
-                Stop Setup Server
-              </button>
-            ) : (
-              <button className="btn success" onClick={handleStartSetupServer}>
-                Start Setup Server
-              </button>
-            )}
-          </div>
+          <div>Mode: {setupConfig.mode}</div>
+          {setupConfig.mode === 'remote' && (
+            <div>Remote: {setupConfig.host}:{setupConfig.port}</div>
+          )}
+          
+          {!showSetupConfig ? (
+            <div style={{ marginTop: '1rem' }}>
+              {setupServerStatus === 'running' ? (
+                <button className="btn danger" onClick={handleStopSetup}>
+                  Stop Setup Server
+                </button>
+              ) : (
+                <>
+                  <button className="btn success" onClick={() => setShowSetupConfig(true)}>
+                    Configure
+                  </button>
+                  <button 
+                    className="btn" 
+                    onClick={handleStartSetupLocal}
+                    style={{ marginLeft: '0.5rem' }}
+                  >
+                    Start Local
+                  </button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="config-form" style={{ marginTop: '1rem' }}>
+              <div className="form-group">
+                <label>Host:</label>
+                <input
+                  type="text"
+                  value={setupConfig.host}
+                  onChange={(e) => setSetupConfig({...setupConfig, host: e.target.value})}
+                  placeholder="localhost"
+                />
+              </div>
+              <div className="form-group">
+                <label>API Port:</label>
+                <input
+                  type="number"
+                  value={setupConfig.port}
+                  onChange={(e) => setSetupConfig({...setupConfig, port: parseInt(e.target.value)})}
+                  placeholder="5501"
+                />
+              </div>
+              <div className="form-text">TLS Port: {setupConfig.port - 1} (auto-configured)</div>
+              <div style={{ marginTop: '1rem' }}>
+                <button className="btn success" onClick={handleStartSetupLocal}>
+                  Start Local
+                </button>
+                <button 
+                  className="btn" 
+                  onClick={handleConnectSetupRemote}
+                  style={{ marginLeft: '0.5rem' }}
+                >
+                  Connect Remote
+                </button>
+                <button 
+                  className="btn" 
+                  onClick={() => setShowSetupConfig(false)}
+                  style={{ marginLeft: '0.5rem' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
+        {/* LG Cloud Server Card */}
         <div className="card">
           <h2>LG Cloud Server</h2>
           <div>
             <span className={`status-indicator ${lgCloudStatus === 'running' ? 'connected' : 'disconnected'}`}></span>
             Status: {lgCloudStatus}
           </div>
-          <div>
-            Mode: {serviceConfigs.lgCloud?.mode || 'local'}
-            {serviceConfigs.lgCloud?.mode === 'remote' && (
-              <div>Remote: {serviceConfigs.lgCloud?.host}:{serviceConfigs.lgCloud?.port}</div>
-            )}
-          </div>
-          <div style={{ marginTop: '1rem' }}>
-            {lgCloudStatus === 'running' ? (
-              <button className="btn danger" onClick={handleStopLgCloud}>
-                Stop LG Cloud
-              </button>
-            ) : (
-              <button className="btn success" onClick={handleStartLgCloud}>
-                Start LG Cloud
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="card">
-          <h2>MQTT Monitoring</h2>
-          <div>
-            <span className={`status-indicator ${mqttStatus}`}></span>
-            Status: {mqttStatus}
-          </div>
-          <div>
-            Mode: {serviceConfigs.mqtt?.mode || 'local'}
-            {serviceConfigs.mqtt?.mode === 'remote' && serviceConfigs.mqtt?.host && (
-              <div>Remote: {serviceConfigs.mqtt?.host}:{serviceConfigs.mqtt?.port}</div>
-            )}
-          </div>
-          <div style={{ marginTop: '1rem' }}>
-            {mqttStatus === 'connected' ? (
-              <button className="btn danger" onClick={handleStopMonitoring}>
-                Stop Monitoring
-              </button>
-            ) : (
-              <button className="btn success" onClick={handleStartMonitoring}>
-                Start Monitoring
-              </button>
-            )}
-          </div>
+          <div>Mode: {lgCloudConfig.mode}</div>
+          {lgCloudConfig.mode === 'remote' && (
+            <div>Remote: {lgCloudConfig.host}:{lgCloudConfig.port}</div>
+          )}
+          
+          {!showLgCloudConfig ? (
+            <div style={{ marginTop: '1rem' }}>
+              {lgCloudStatus === 'running' ? (
+                <button className="btn danger" onClick={handleStopLgCloud}>
+                  Stop LG Cloud
+                </button>
+              ) : (
+                <>
+                  <button className="btn success" onClick={() => setShowLgCloudConfig(true)}>
+                    Configure
+                  </button>
+                  <button 
+                    className="btn" 
+                    onClick={handleStartLgCloudLocal}
+                    style={{ marginLeft: '0.5rem' }}
+                  >
+                    Start Local
+                  </button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="config-form" style={{ marginTop: '1rem' }}>
+              <div className="form-group">
+                <label>Host:</label>
+                <input
+                  type="text"
+                  value={lgCloudConfig.host}
+                  onChange={(e) => setLgCloudConfig({...lgCloudConfig, host: e.target.value})}
+                  placeholder="localhost"
+                />
+              </div>
+              <div className="form-group">
+                <label>API Port:</label>
+                <input
+                  type="number"
+                  value={lgCloudConfig.port}
+                  onChange={(e) => setLgCloudConfig({...lgCloudConfig, port: parseInt(e.target.value)})}
+                  placeholder="8080"
+                />
+              </div>
+              <div style={{ marginTop: '1rem' }}>
+                <button className="btn success" onClick={handleStartLgCloudLocal}>
+                  Start Local
+                </button>
+                <button 
+                  className="btn" 
+                  onClick={handleConnectLgCloudRemote}
+                  style={{ marginLeft: '0.5rem' }}
+                >
+                  Connect Remote
+                </button>
+                <button 
+                  className="btn" 
+                  onClick={() => setShowLgCloudConfig(false)}
+                  style={{ marginLeft: '0.5rem' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="card">
@@ -317,87 +565,7 @@ export default function Dashboard() {
             )}
           </div>
         </div>
-
-        <div className="card">
-          <h2>Remote Services</h2>
-          <div>
-            {Object.keys(remoteServices).length === 0 ? (
-              <p>No remote services connected</p>
-            ) : (
-              Object.entries(remoteServices).map(([serviceName, service]) => (
-                <div key={serviceName} className="message-item">
-                  <div><strong>{serviceName}</strong></div>
-                  <div>
-                    <span className={`status-indicator ${service.connected ? 'connected' : 'disconnected'}`}></span>
-                    {service.endpoint}
-                  </div>
-                  <button 
-                    className="btn danger" 
-                    onClick={() => handleDisconnectRemoteService(serviceName)}
-                    style={{ marginTop: '0.5rem' }}
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-          <button 
-            className="btn success" 
-            onClick={() => setShowRemoteConfig(true)}
-            style={{ marginTop: '1rem' }}
-          >
-            Connect Remote Service
-          </button>
-        </div>
       </div>
-
-      {showRemoteConfig && (
-        <div className="card" style={{ marginTop: '2rem' }}>
-          <h2>Connect Remote Service</h2>
-          <div className="form-group">
-            <label>Service Type:</label>
-            <select
-              value={remoteServiceForm.serviceType}
-              onChange={(e) => setRemoteServiceForm(prev => ({ ...prev, serviceType: e.target.value }))}
-            >
-              <option value="setupServer">Setup Server</option>
-              <option value="lgCloud">LG Cloud</option>
-              <option value="mqtt">MQTT Broker</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label>Host/IP Address:</label>
-            <input
-              type="text"
-              value={remoteServiceForm.host}
-              onChange={(e) => setRemoteServiceForm(prev => ({ ...prev, host: e.target.value }))}
-              placeholder="192.168.1.100"
-            />
-          </div>
-          <div className="form-group">
-            <label>Port:</label>
-            <input
-              type="number"
-              value={remoteServiceForm.port}
-              onChange={(e) => setRemoteServiceForm(prev => ({ ...prev, port: e.target.value }))}
-              placeholder="5501"
-            />
-          </div>
-          <div style={{ marginTop: '1rem' }}>
-            <button className="btn" onClick={handleConnectRemoteService}>
-              Connect
-            </button>
-            <button 
-              className="btn" 
-              onClick={() => setShowRemoteConfig(false)}
-              style={{ marginLeft: '1rem' }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

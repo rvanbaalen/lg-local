@@ -1,0 +1,9 @@
+{
+  "watch": ["server.js", "lib/**/*.js", "services/**/*.js", "bin/**/*.js"],
+  "ignore": ["config.json", "node_modules/**/*", "dist/**/*", "src/**/*"],
+  "ext": "js",
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "delay": "1000"
+}

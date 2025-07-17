@@ -304,10 +304,14 @@ io.on('connection', (socket) => {
             if (lgCloudServer) {
                 await lgCloudServer.stop();
             }
-            callback({ success: true });
+            if (callback && typeof callback === 'function') {
+                callback({ success: true });
+            }
         } catch (error) {
             console.error('Failed to stop LG Cloud Server:', error);
-            callback({ success: false, error: error.message });
+            if (callback && typeof callback === 'function') {
+                callback({ success: false, error: error.message });
+            }
         }
     });
     
